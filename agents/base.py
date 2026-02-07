@@ -1,5 +1,6 @@
 """Base agent class with shared functionality: Gemini calls, audit logging, access control."""
 
+import asyncio
 import hashlib
 import json
 from abc import ABC, abstractmethod
@@ -16,7 +17,7 @@ class BaseAgent(ABC):
     """Base class for all governance agents."""
 
     agent_type: AgentType
-    model: str = "gemini-2.5-pro"
+    model: str = "gemini-2.5-flash"
 
     def __init__(self, job_id: str, db):
         self.job_id = job_id
@@ -68,13 +69,27 @@ class BaseAgent(ABC):
         await self.db.commit()
 
     async def call_gemini(self, system_prompt: str, user_content: str) -> str:
-        """Call Gemini API and return the text response."""
+        """Call Gemini API with exponential backoff retry on 429 errors."""
         full_prompt = f"{system_prompt}\n\n---\n\n{user_content}"
-        response = self.client.models.generate_content(
-            model=self.model,
-            contents=full_prompt,
-        )
-        return response.text
+        backoff_delays = [30, 60, 90]
+
+        for attempt in range(len(backoff_delays) + 1):
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model,
+                    contents=full_prompt,
+                )
+                return response.text
+            except Exception as e:
+                if "429" in str(e) and attempt < len(backoff_delays):
+                    delay = backoff_delays[attempt]
+                    await self.log_audit(
+                        action="rate_limit_retry",
+                        output_summary=f"429 hit, retrying in {delay}s (attempt {attempt + 1}/{len(backoff_delays)})",
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    raise
 
     def parse_json_response(self, text: str) -> list[dict]:
         """Extract JSON array from Gemini response, handling markdown fences."""

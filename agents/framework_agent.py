@@ -12,7 +12,8 @@ IMPORTANT CONSTRAINTS:
 - All findings must include direct evidence quotes
 - Use objective, analytical language
 
-Compare the meeting minutes against the governance framework/policy documents and identify:
+You will be given one or more meeting minutes documents and optionally governance framework/policy
+documents, each clearly separated. Compare ALL meeting minutes against the framework documents and identify:
 
 1. **Procedural Gaps**: Required procedures that were not followed (e.g., quorum not verified,
    required approvals missing, notification requirements not met)
@@ -26,6 +27,7 @@ Return your findings as a JSON array. Each finding must have this exact structur
     "finding_type": "procedural_gap" | "documentation_gap" | "policy_deviation" | "best_practice_gap",
     "title": "Short descriptive title",
     "description": "Detailed description of the gap identified",
+    "source_document": "the exact filename of the minutes document this finding applies to",
     "evidence_quote": "Exact quote from minutes or framework doc supporting this finding",
     "section_reference": "Page/section reference in the source document",
     "framework_reference": "The specific policy or framework clause that is relevant",
@@ -62,53 +64,61 @@ class FrameworkCheckerAgent(BaseAgent):
             return []
 
         # Build framework context
-        framework_context = ""
-        if framework_docs:
-            framework_texts = []
-            for doc in framework_docs:
-                if doc.get("content", "").strip():
-                    framework_texts.append(
-                        f"[Framework/Policy: {doc['filename']}]\n{doc['content']}"
-                    )
-            framework_context = "\n\n---\n\n".join(framework_texts)
+        framework_sections = []
+        for doc in framework_docs:
+            if doc.get("content", "").strip():
+                framework_sections.append(
+                    f"=== FRAMEWORK/POLICY: {doc['filename']} ===\n{doc['content']}\n=== END: {doc['filename']} ==="
+                )
 
-        all_findings = []
-
+        # Build batched minutes content
+        minutes_sections = []
+        doc_map = {}  # filename -> doc metadata
         for doc in minutes_docs:
             content = doc.get("content", "")
             if not content.strip():
                 continue
-
-            input_hash = self.compute_input_hash(content)
-            await self.log_audit(
-                action="analyzing_document",
-                document_id=doc["id"],
-                input_hash=input_hash,
-                output_summary=f"Framework check: {doc['filename']}",
+            filename = doc["filename"]
+            doc_map[filename] = doc
+            minutes_sections.append(
+                f"=== MEETING MINUTES: {filename} ===\n{content}\n=== END: {filename} ==="
             )
 
-            user_content = f"MEETING MINUTES: {doc['filename']}\n\n{content}"
-            if framework_context:
-                user_content += (
-                    f"\n\n===\n\nGOVERNANCE FRAMEWORK/POLICY DOCUMENTS:\n\n{framework_context}"
-                )
-            else:
-                user_content += "\n\n[No explicit framework documents provided — analyze against general governance best practices]"
+        if not minutes_sections:
+            return []
 
-            response_text = await self.call_gemini(SYSTEM_PROMPT, user_content)
-            findings = self.parse_json_response(response_text)
+        combined_input = self.compute_input_hash(
+            "\n".join(minutes_sections + framework_sections)
+        )
+        await self.log_audit(
+            action="analyzing_batch",
+            input_hash=combined_input,
+            output_summary=f"Framework check: {len(minutes_sections)} minutes docs, {len(framework_sections)} framework docs",
+        )
 
-            for finding in findings:
-                finding["source_document"] = doc["filename"]
-                finding["document_id"] = doc["id"]
-
-            await self.log_audit(
-                action="document_analyzed",
-                document_id=doc["id"],
-                input_hash=input_hash,
-                output_summary=f"Found {len(findings)} gaps in {doc['filename']}",
+        user_content = "\n\n".join(minutes_sections)
+        if framework_sections:
+            user_content += (
+                "\n\n===\n\nGOVERNANCE FRAMEWORK/POLICY DOCUMENTS:\n\n"
+                + "\n\n".join(framework_sections)
             )
+        else:
+            user_content += "\n\n[No explicit framework documents provided — analyze against general governance best practices]"
 
-            all_findings.extend(findings)
+        response_text = await self.call_gemini(SYSTEM_PROMPT, user_content)
+        findings = self.parse_json_response(response_text)
 
-        return all_findings
+        # Map document_id from filename
+        for finding in findings:
+            src = finding.get("source_document", "")
+            matched_doc = doc_map.get(src)
+            if matched_doc:
+                finding["document_id"] = matched_doc["id"]
+
+        await self.log_audit(
+            action="batch_analyzed",
+            input_hash=combined_input,
+            output_summary=f"Found {len(findings)} gaps across {len(minutes_sections)} documents",
+        )
+
+        return findings
