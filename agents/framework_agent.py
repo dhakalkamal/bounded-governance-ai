@@ -1,6 +1,6 @@
 """Framework Checker Agent — identifies governance gaps by comparing minutes against framework docs."""
 
-from agents.base import BaseAgent
+from .base import BaseAgent
 from shared.schemas import AgentType
 
 SYSTEM_PROMPT = """You are a Governance Framework Checker Agent. Your role is to analyze board meeting

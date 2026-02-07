@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ScrollText, Clock, Filter } from "lucide-react";
+import { ScrollText, Clock, Filter } from "lucide-react"
 import { getAuditLog } from "@/lib/api";
 import { agentLabel, agentColor } from "@/lib/utils";
 

@@ -1,6 +1,6 @@
 """COI Detector Agent — identifies potential conflict-of-interest signals (non-accusatory)."""
 
-from agents.base import BaseAgent
+from .base import BaseAgent
 from shared.schemas import AgentType
 
 SYSTEM_PROMPT = """You are a Conflict-of-Interest (COI) Detection Agent. Your role is to identify
