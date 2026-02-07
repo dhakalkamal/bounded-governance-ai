@@ -12,7 +12,8 @@ IMPORTANT CONSTRAINTS:
 - All findings must include direct evidence quotes from the source text
 - Do not make legal or compliance determinations
 
-Analyze the provided board meeting minutes and extract ALL of the following:
+You will be given one or more board meeting minutes documents, each clearly separated.
+Analyze ALL documents and extract ALL of the following:
 
 1. **Decisions**: Any decisions made by the board, including who proposed, who voted, and the outcome
 2. **Action Items**: Assigned tasks with responsible party, deadline if mentioned, and status
@@ -24,6 +25,7 @@ Return your findings as a JSON array. Each finding must have this exact structur
     "finding_type": "decision" | "action_item" | "risk" | "voting_record",
     "title": "Short descriptive title",
     "description": "Detailed description of the finding",
+    "source_document": "the exact filename of the document this finding comes from",
     "evidence_quote": "Exact quote from the document supporting this finding",
     "section_reference": "Page number, section, or paragraph reference",
     "confidence": 0.0 to 1.0,
@@ -43,39 +45,47 @@ class MinutesAnalyzerAgent(BaseAgent):
     agent_type = AgentType.MINUTES_ANALYZER
 
     async def analyze(self, documents: list[dict]) -> list[dict]:
-        all_findings = []
-
+        # Build batched prompt with all documents
+        doc_sections = []
+        doc_map = {}  # filename -> doc metadata
         for doc in documents:
             content = doc.get("content", "")
             if not content.strip():
                 continue
-
-            input_hash = self.compute_input_hash(content)
-            await self.log_audit(
-                action="analyzing_document",
-                document_id=doc["id"],
-                input_hash=input_hash,
-                output_summary=f"Analyzing: {doc['filename']}",
+            filename = doc["filename"]
+            doc_map[filename] = doc
+            doc_sections.append(
+                f"=== DOCUMENT: {filename} ===\n{content}\n=== END: {filename} ==="
             )
 
-            response_text = await self.call_gemini(
-                SYSTEM_PROMPT,
-                f"DOCUMENT: {doc['filename']}\n\n{content}",
-            )
+        if not doc_sections:
+            return []
 
-            findings = self.parse_json_response(response_text)
+        combined_input = self.compute_input_hash("\n".join(doc_sections))
+        await self.log_audit(
+            action="analyzing_batch",
+            input_hash=combined_input,
+            output_summary=f"Batch analyzing {len(doc_sections)} documents",
+        )
 
-            for finding in findings:
-                finding["source_document"] = doc["filename"]
-                finding["document_id"] = doc["id"]
+        response_text = await self.call_gemini(
+            SYSTEM_PROMPT,
+            "\n\n".join(doc_sections),
+        )
 
-            await self.log_audit(
-                action="document_analyzed",
-                document_id=doc["id"],
-                input_hash=input_hash,
-                output_summary=f"Found {len(findings)} items in {doc['filename']}",
-            )
+        findings = self.parse_json_response(response_text)
 
-            all_findings.extend(findings)
+        # Map document_id from filename
+        for finding in findings:
+            src = finding.get("source_document", "")
+            matched_doc = doc_map.get(src)
+            if matched_doc:
+                finding["document_id"] = matched_doc["id"]
 
-        return all_findings
+        await self.log_audit(
+            action="batch_analyzed",
+            input_hash=combined_input,
+            output_summary=f"Found {len(findings)} items across {len(doc_sections)} documents",
+        )
+
+        return findings
