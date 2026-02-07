@@ -14,7 +14,8 @@ CRITICAL CONSTRAINTS:
 - Include direct evidence quotes for every finding
 - Do not make legal determinations
 
-Analyze the documents for these types of COI signals:
+You will be given one or more documents, each clearly separated. Analyze ALL documents
+for these types of COI signals:
 
 1. **Related Party Signals**: Mentions of transactions or decisions involving entities
    that may have relationships with board members
@@ -29,6 +30,7 @@ Return your findings as a JSON array. Each finding must have this exact structur
     "finding_type": "related_party_signal" | "recusal_pattern" | "disclosure_gap" | "voting_pattern_signal",
     "title": "Short descriptive title (non-accusatory)",
     "description": "Detailed description using phrases like 'may warrant review', 'potential signal', 'for consideration'",
+    "source_document": "the exact filename of the document this finding comes from",
     "evidence_quote": "Exact quote from the document",
     "section_reference": "Page/section reference",
     "individuals_mentioned": ["List of names mentioned in context"],
@@ -52,39 +54,48 @@ class COIDetectorAgent(BaseAgent):
     agent_type = AgentType.COI_DETECTOR
 
     async def analyze(self, documents: list[dict]) -> list[dict]:
-        all_findings = []
-
+        # Build batched prompt with all documents
+        doc_sections = []
+        doc_map = {}  # filename -> doc metadata
         for doc in documents:
             content = doc.get("content", "")
             if not content.strip():
                 continue
-
-            input_hash = self.compute_input_hash(content)
-            await self.log_audit(
-                action="analyzing_document",
-                document_id=doc["id"],
-                input_hash=input_hash,
-                output_summary=f"COI scan: {doc['filename']}",
+            filename = doc["filename"]
+            doc_type = doc.get("doc_type", "unknown")
+            doc_map[filename] = doc
+            doc_sections.append(
+                f"=== DOCUMENT: {filename} (type: {doc_type}) ===\n{content}\n=== END: {filename} ==="
             )
 
-            response_text = await self.call_gemini(
-                SYSTEM_PROMPT,
-                f"DOCUMENT: {doc['filename']}\nTYPE: {doc.get('doc_type', 'unknown')}\n\n{content}",
-            )
+        if not doc_sections:
+            return []
 
-            findings = self.parse_json_response(response_text)
+        combined_input = self.compute_input_hash("\n".join(doc_sections))
+        await self.log_audit(
+            action="analyzing_batch",
+            input_hash=combined_input,
+            output_summary=f"COI batch scan of {len(doc_sections)} documents",
+        )
 
-            for finding in findings:
-                finding["source_document"] = doc["filename"]
-                finding["document_id"] = doc["id"]
+        response_text = await self.call_gemini(
+            SYSTEM_PROMPT,
+            "\n\n".join(doc_sections),
+        )
 
-            await self.log_audit(
-                action="document_analyzed",
-                document_id=doc["id"],
-                input_hash=input_hash,
-                output_summary=f"Found {len(findings)} COI signals in {doc['filename']}",
-            )
+        findings = self.parse_json_response(response_text)
 
-            all_findings.extend(findings)
+        # Map document_id from filename
+        for finding in findings:
+            src = finding.get("source_document", "")
+            matched_doc = doc_map.get(src)
+            if matched_doc:
+                finding["document_id"] = matched_doc["id"]
 
-        return all_findings
+        await self.log_audit(
+            action="batch_analyzed",
+            input_hash=combined_input,
+            output_summary=f"Found {len(findings)} COI signals across {len(doc_sections)} documents",
+        )
+
+        return findings

@@ -28,6 +28,8 @@ export function agentLabel(agentType: string) {
       return "COI Detector";
     case "reviewer":
       return "Reviewer";
+    case "cross_document":
+      return "Cross-Document";
     default:
       return agentType;
   }
@@ -43,6 +45,8 @@ export function agentColor(agentType: string) {
       return "text-amber-400 bg-amber-400/10";
     case "reviewer":
       return "text-emerald-400 bg-emerald-400/10";
+    case "cross_document":
+      return "text-teal-400 bg-teal-400/10";
     default:
       return "text-slate-400 bg-slate-400/10";
   }
