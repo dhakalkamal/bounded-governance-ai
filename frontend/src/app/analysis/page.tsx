@@ -10,8 +10,10 @@ import {
   FileText,
   ChevronDown,
   ChevronRight,
+  CheckCircle,
+  XCircle,
 } from "lucide-react";
-import { getFindings } from "@/lib/api";
+import { getFindings, updateFindingStatus } from "@/lib/api";
 import { severityColor, agentLabel, agentColor, cn } from "@/lib/utils";
 
 export default function AnalysisPage() {
@@ -69,6 +71,8 @@ export default function AnalysisPage() {
           <option value="minutes_analyzer">Minutes Analyzer</option>
           <option value="framework_checker">Framework Checker</option>
           <option value="coi_detector">COI Detector</option>
+          <option value="cross_document">Cross-Document</option>
+          <option value="reviewer">Reviewer</option>
         </select>
         <select
           value={filterSeverity}
@@ -144,11 +148,23 @@ export default function AnalysisPage() {
                           <span className="text-sm font-medium">
                             {f.title}
                           </span>
-                          {f.flagged_for_review && (
+                          {f.review_status === "verified" ? (
+                            <span className="text-xs text-emerald-400 flex items-center gap-1">
+                              <CheckCircle className="w-3 h-3" /> Verified
+                            </span>
+                          ) : f.review_status === "disputed" ? (
+                            <span className="text-xs text-red-400 flex items-center gap-1">
+                              <XCircle className="w-3 h-3" /> Disputed
+                            </span>
+                          ) : f.review_status === "flagged" ? (
+                            <span className="text-xs text-amber-400 flex items-center gap-1">
+                              <Flag className="w-3 h-3" /> Flagged
+                            </span>
+                          ) : f.flagged_for_review ? (
                             <span className="text-xs text-amber-400 flex items-center gap-1">
                               <Flag className="w-3 h-3" /> Under review
                             </span>
-                          )}
+                          ) : null}
                         </div>
                         <p className="text-xs text-[var(--text-muted)] mt-1">
                           {f.finding_type} &middot; Confidence:{" "}
@@ -184,6 +200,85 @@ export default function AnalysisPage() {
                           {f.section_reference && (
                             <span>Section: {f.section_reference}</span>
                           )}
+                        </div>
+
+                        {/* Verification buttons */}
+                        <div className="flex gap-2 pt-2 border-t border-[var(--border)]">
+                          <button
+                            onClick={async () => {
+                              try {
+                                const updated = await updateFindingStatus(f.id, "verified");
+                                setFindings((prev) =>
+                                  prev.map((ff) =>
+                                    ff.id === f.id
+                                      ? { ...ff, review_status: updated.review_status, flagged_for_review: updated.flagged_for_review }
+                                      : ff
+                                  )
+                                );
+                              } catch (e) {
+                                console.error(e);
+                              }
+                            }}
+                            className={cn(
+                              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                              f.review_status === "verified"
+                                ? "bg-emerald-400/20 text-emerald-400 border border-emerald-400/30"
+                                : "bg-[var(--bg-secondary)] text-[var(--text-muted)] hover:text-emerald-400 hover:bg-emerald-400/10"
+                            )}
+                          >
+                            <CheckCircle className="w-3.5 h-3.5" />
+                            Verify
+                          </button>
+                          <button
+                            onClick={async () => {
+                              try {
+                                const updated = await updateFindingStatus(f.id, "disputed");
+                                setFindings((prev) =>
+                                  prev.map((ff) =>
+                                    ff.id === f.id
+                                      ? { ...ff, review_status: updated.review_status, flagged_for_review: updated.flagged_for_review }
+                                      : ff
+                                  )
+                                );
+                              } catch (e) {
+                                console.error(e);
+                              }
+                            }}
+                            className={cn(
+                              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                              f.review_status === "disputed"
+                                ? "bg-red-400/20 text-red-400 border border-red-400/30"
+                                : "bg-[var(--bg-secondary)] text-[var(--text-muted)] hover:text-red-400 hover:bg-red-400/10"
+                            )}
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                            Dispute
+                          </button>
+                          <button
+                            onClick={async () => {
+                              try {
+                                const updated = await updateFindingStatus(f.id, "flagged");
+                                setFindings((prev) =>
+                                  prev.map((ff) =>
+                                    ff.id === f.id
+                                      ? { ...ff, review_status: updated.review_status, flagged_for_review: updated.flagged_for_review }
+                                      : ff
+                                  )
+                                );
+                              } catch (e) {
+                                console.error(e);
+                              }
+                            }}
+                            className={cn(
+                              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                              f.review_status === "flagged"
+                                ? "bg-amber-400/20 text-amber-400 border border-amber-400/30"
+                                : "bg-[var(--bg-secondary)] text-[var(--text-muted)] hover:text-amber-400 hover:bg-amber-400/10"
+                            )}
+                          >
+                            <Flag className="w-3.5 h-3.5" />
+                            Flag for Review
+                          </button>
                         </div>
                       </div>
                     )}
