@@ -8,6 +8,7 @@ class AgentType(str, Enum):
     FRAMEWORK_CHECKER = "framework_checker"
     COI_DETECTOR = "coi_detector"
     REVIEWER = "reviewer"
+    CROSS_DOCUMENT_ANALYZER = "cross_document"
 
 
 class DocumentType(str, Enum):
@@ -49,5 +50,16 @@ AGENT_ACCESS_MATRIX = {
         "can_read": [DocumentType.MINUTES, DocumentType.DISCLOSURE],
         "can_write": ["coi_signals"],
         "restrictions": "Non-accusatory language only",
+    },
+    AgentType.CROSS_DOCUMENT_ANALYZER: {
+        "can_read": [
+            DocumentType.MINUTES,
+            DocumentType.POLICY,
+            DocumentType.FRAMEWORK,
+            DocumentType.DISCLOSURE,
+            DocumentType.OTHER,
+        ],
+        "can_write": ["cross_document_patterns"],
+        "restrictions": "Read-only analysis across documents",
     },
 }

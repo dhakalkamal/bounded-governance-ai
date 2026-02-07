@@ -55,11 +55,30 @@ export async function getFindings(params?: {
   return apiFetch(`/api/findings${qs ? `?${qs}` : ""}`);
 }
 
-export async function sendChat(message: string, documentIds: string[]) {
+export async function sendChat(
+  message: string,
+  documentIds: string[],
+  conversationHistory: { role: string; content: string }[] = []
+) {
   return apiFetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, document_ids: documentIds }),
+    body: JSON.stringify({
+      message,
+      document_ids: documentIds,
+      conversation_history: conversationHistory,
+    }),
+  });
+}
+
+export async function updateFindingStatus(
+  findingId: string,
+  status: string
+) {
+  return apiFetch(`/api/findings/${findingId}/status`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
   });
 }
 

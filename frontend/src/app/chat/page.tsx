@@ -46,7 +46,12 @@ export default function ChatPage() {
     setSending(true);
 
     try {
-      const res = await sendChat(input, Array.from(selectedDocs));
+      // Build conversation history from existing messages (exclude sources)
+      const history = messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+      const res = await sendChat(input, Array.from(selectedDocs), history);
       const assistantMsg: Message = {
         role: "assistant",
         content: res.response,

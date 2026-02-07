@@ -57,6 +57,7 @@ class Finding(BaseModel):
     confidence: float
     severity: str
     flagged_for_review: bool = False
+    review_status: Optional[str] = None
     created_at: str
 
 
@@ -65,10 +66,15 @@ class FindingsResponse(BaseModel):
     total: int
 
 
+class FindingStatusUpdate(BaseModel):
+    status: str = Field(..., pattern="^(verified|disputed|flagged)$")
+
+
 # --- Chat ---
 class ChatRequest(BaseModel):
     message: str
     document_ids: list[str] = Field(default_factory=list)
+    conversation_history: list[dict] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):
