@@ -1,5 +1,6 @@
 """Agent Orchestrator — coordinates agents sequentially, runs self-correction reviewer loop."""
 
+import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
@@ -39,6 +40,40 @@ Set flag_for_review to true if:
 - The finding is unclear or not actionable
 - COI language is accusatory
 
+Return ONLY the JSON array, no other text."""
+
+CROSS_DOCUMENT_SYSTEM_PROMPT = """You are a Cross-Document Analysis Agent. Your role is to look ACROSS
+multiple governance documents to identify patterns over time that individual document analysis would miss.
+
+Analyze the provided documents and per-document findings to detect:
+
+1. **recurring_risk** — Risks or concerns mentioned across multiple meetings/documents.
+   Look for the same risk appearing in different documents, even if worded differently.
+
+2. **unresolved_action_item** — Action items assigned in earlier documents that are never
+   marked as resolved or addressed in later documents.
+
+3. **escalating_theme** — Issues that grow in severity or urgency over time across documents.
+   Look for topics that start as minor notes and become major agenda items.
+
+4. **persistent_governance_gap** — Framework or procedural gaps that repeat across multiple
+   meetings without being addressed. Patterns of non-compliance or missing procedures.
+
+For each finding, return a JSON object with:
+{
+    "finding_type": "recurring_risk" | "unresolved_action_item" | "escalating_theme" | "persistent_governance_gap",
+    "title": "Brief title",
+    "description": "Detailed description of the cross-document pattern",
+    "severity": "high" | "medium" | "low" | "info",
+    "confidence": 0.0 to 1.0,
+    "source_documents": ["filename1.pdf", "filename2.pdf"],
+    "evidence_quotes": {
+        "filename1.pdf": "relevant quote from first document",
+        "filename2.pdf": "relevant quote from second document"
+    }
+}
+
+Return a JSON array of findings. If no cross-document patterns are found, return an empty array [].
 Return ONLY the JSON array, no other text."""
 
 
@@ -97,6 +132,71 @@ class Orchestrator:
         await self.db.commit()
         return finding_id
 
+    async def run_cross_document_analysis(
+        self, documents: list[dict], all_findings: list[dict]
+    ) -> list[dict]:
+        """Analyze patterns across all documents using prior agent findings as context."""
+        if len(documents) < 2:
+            return []
+
+        # Build document content section
+        doc_sections = []
+        for doc in documents:
+            filename = doc.get("filename", "unknown")
+            content = doc.get("content", "")
+            doc_sections.append(
+                f"=== DOCUMENT: {filename} ===\n{content}\n=== END: {filename} ==="
+            )
+        documents_text = "\n\n".join(doc_sections)
+
+        # Build per-document findings summary
+        findings_by_doc = {}
+        for f in all_findings:
+            src = f.get("source_document", "unknown")
+            findings_by_doc.setdefault(src, []).append(
+                {
+                    "agent": f.get("agent_type", "unknown"),
+                    "type": f.get("finding_type"),
+                    "title": f.get("title"),
+                    "description": f.get("description"),
+                    "severity": f.get("severity"),
+                    "confidence": f.get("confidence"),
+                }
+            )
+        findings_text = json.dumps(findings_by_doc, indent=2)
+
+        user_content = (
+            f"{CROSS_DOCUMENT_SYSTEM_PROMPT}\n\n---\n\n"
+            f"DOCUMENTS:\n{documents_text}\n\n---\n\n"
+            f"PER-DOCUMENT FINDINGS:\n{findings_text}"
+        )
+
+        response = self.client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=user_content,
+        )
+
+        # Parse response (same markdown-fence stripping as run_reviewer)
+        result_text = response.text.strip()
+        if result_text.startswith("```"):
+            lines = result_text.split("\n")[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            result_text = "\n".join(lines)
+
+        findings = json.loads(result_text) if result_text else []
+
+        # Normalize each finding for save_finding compatibility
+        for f in findings:
+            f["agent_type"] = "cross_document"
+            # Store source_documents list and evidence_quotes in metadata
+            # Pick first source_document for the DB column
+            source_docs = f.get("source_documents", [])
+            f["source_document"] = source_docs[0] if source_docs else None
+            # evidence_quotes will flow into metadata_json via save_finding
+
+        return findings
+
     async def run_reviewer(self, all_findings: list[dict]) -> list[dict]:
         """Self-correction loop: review findings and flag low-quality ones."""
         if not all_findings:
@@ -128,7 +228,7 @@ class Orchestrator:
 
         try:
             response = self.client.models.generate_content(
-                model="gemini-2.5-pro",
+                model="gemini-2.5-flash",
                 contents=f"{REVIEWER_SYSTEM_PROMPT}\n\n---\n\nFINDINGS TO REVIEW:\n{findings_text}",
             )
 
@@ -199,7 +299,10 @@ class Orchestrator:
             (COIDetectorAgent, "coi_detector"),
         ]
 
-        for agent_cls, agent_name in agents:
+        for i, (agent_cls, agent_name) in enumerate(agents):
+            if i > 0:
+                await asyncio.sleep(15)
+
             try:
                 await self.log_audit(
                     action=f"{agent_name}_starting",
@@ -222,6 +325,33 @@ class Orchestrator:
                     output_summary=f"{agent_name} failed: {str(e)[:200]}",
                 )
                 agent_results[agent_name] = f"error: {str(e)[:100]}"
+
+        # Cross-document analysis step
+        await asyncio.sleep(15)
+        try:
+            await self.log_audit(
+                action="cross_document_starting",
+                output_summary="Starting cross-document pattern analysis",
+            )
+
+            cross_findings = await self.run_cross_document_analysis(
+                documents, all_findings
+            )
+
+            agent_results["cross_document"] = len(cross_findings)
+            all_findings.extend(cross_findings)
+
+            await self.log_audit(
+                action="cross_document_completed",
+                output_summary=f"Found {len(cross_findings)} cross-document patterns",
+            )
+
+        except Exception as e:
+            await self.log_audit(
+                action="cross_document_failed",
+                output_summary=f"Cross-document analysis failed: {str(e)[:200]}",
+            )
+            agent_results["cross_document"] = f"error: {str(e)[:100]}"
 
         # Self-correction reviewer loop
         now = datetime.now(timezone.utc).isoformat()
