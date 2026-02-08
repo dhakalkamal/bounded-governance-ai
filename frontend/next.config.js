@@ -3,4 +3,4 @@ const nextConfig = {
   output: "standalone",
 };
 
-module.exports = nextConfig; // trigger restart
+module.exports = nextConfig;

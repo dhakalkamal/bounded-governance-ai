@@ -1,6 +1,6 @@
 """Minutes Analyzer Agent — extracts decisions, action items, risks, and voting records."""
 
-from .base import BaseAgent
+from agents.base import BaseAgent
 from shared.schemas import AgentType
 
 SYSTEM_PROMPT = """You are a Board Minutes Analyzer Agent. Your role is to analyze board meeting minutes

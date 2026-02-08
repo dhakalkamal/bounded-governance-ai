@@ -1,6 +1,0 @@
-{
-  "dependencies": {
-    "googleapis": "^171.4.0",
-    "react-dropzone": "^14.4.0"
-  }
-}

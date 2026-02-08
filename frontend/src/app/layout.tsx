@@ -6,7 +6,6 @@ export const metadata: Metadata = {
   title: "Governance Platform",
   description: "Bounded Agentic Governance Analysis",
 };
-import { ToastProvider } from "@/components/Toast";
 
 export default function RootLayout({
   children,
@@ -16,12 +15,10 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="min-h-screen bg-[var(--bg-primary)] text-[var(--text-primary)] antialiased">
-        <ToastProvider>
-          <div className="flex h-screen">
-            <Sidebar />
-            <main className="flex-1 overflow-auto p-6">{children}</main>
-          </div>
-        </ToastProvider>
+        <div className="flex h-screen">
+          <Sidebar />
+          <main className="flex-1 overflow-auto p-6">{children}</main>
+        </div>
       </body>
     </html>
   );
