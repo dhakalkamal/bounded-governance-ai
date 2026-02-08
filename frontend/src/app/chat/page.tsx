@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Send, FileText, Bot, User } from "lucide-react";
+import { Send, FileText, Bot, User, ShieldX } from "lucide-react";
 import { listDocuments, sendChat } from "@/lib/api";
+import { useUser } from "@/context/user-context";
 
 interface Message {
   role: "user" | "assistant";
@@ -11,6 +12,7 @@ interface Message {
 }
 
 export default function ChatPage() {
+  const { currentUser } = useUser();
   const [documents, setDocuments] = useState<any[]>([]);
   const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
   const [messages, setMessages] = useState<Message[]>([]);
@@ -18,11 +20,29 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  const canChat = currentUser.permissions.chat;
+
   useEffect(() => {
+    setSelectedDocs(new Set());
+    setMessages([]);
     listDocuments()
       .then((res) => setDocuments(res.documents || []))
       .catch(console.error);
-  }, []);
+  }, [currentUser.name]);
+
+  if (!canChat) {
+    return (
+      <div className="max-w-5xl mx-auto flex items-center justify-center h-[calc(100vh-3rem)]">
+        <div className="text-center">
+          <ShieldX className="w-12 h-12 mx-auto text-[var(--text-muted)] mb-4" />
+          <h2 className="text-xl font-semibold mb-2">Access Denied</h2>
+          <p className="text-[var(--text-muted)]">
+            Your role ({currentUser.role}) does not have permission to use the chat feature.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });

@@ -6,6 +6,7 @@ from typing import Optional
 from backend.app.auth import verify_api_key
 from backend.app.database import get_db
 from backend.app.models.schemas import Finding, FindingsResponse, FindingStatusUpdate
+from backend.app.rbac import get_current_user, get_accessible_filenames, check_permission
 
 router = APIRouter(prefix="/api/findings", tags=["findings"])
 
@@ -46,7 +47,10 @@ async def get_findings(
     agent_type: Optional[str] = Query(None),
     severity: Optional[str] = Query(None),
     _key: str = Depends(verify_api_key),
+    user: dict = Depends(get_current_user),
 ):
+    accessible = get_accessible_filenames(user["name"])
+
     conditions = []
     params = []
 
@@ -71,7 +75,10 @@ async def get_findings(
     finally:
         await db.close()
 
-    findings = [_row_to_finding(row) for row in rows]
+    findings = [
+        _row_to_finding(row) for row in rows
+        if row["source_document"] in accessible
+    ]
     return FindingsResponse(findings=findings, total=len(findings))
 
 
@@ -80,8 +87,11 @@ async def update_finding_status(
     finding_id: str,
     body: FindingStatusUpdate,
     _key: str = Depends(verify_api_key),
+    user: dict = Depends(get_current_user),
 ):
     """Update the review status of a finding (verify, dispute, or flag)."""
+    check_permission(user, "verifyDispute")
+
     db = await get_db()
     try:
         # Fetch existing finding
@@ -120,7 +130,7 @@ async def update_finding_status(
                 "human_reviewer",
                 f"finding_{body.status}",
                 row["job_id"],
-                f"Finding '{row['title']}' marked as {body.status}",
+                f"Finding '{row['title']}' marked as {body.status} by {user['name']}",
             ],
         )
 

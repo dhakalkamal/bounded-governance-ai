@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from backend.app.auth import verify_api_key
 from backend.app.database import get_db
 from backend.app.models.schemas import AnalyzeRequest, AnalyzeResponse, JobStatusResponse
+from backend.app.rbac import get_current_user, check_permission
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -73,7 +74,10 @@ async def trigger_analysis(
     req: AnalyzeRequest,
     background_tasks: BackgroundTasks,
     _key: str = Depends(verify_api_key),
+    user: dict = Depends(get_current_user),
 ):
+    check_permission(user, "runAnalysis")
+
     job_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
@@ -82,6 +86,11 @@ async def trigger_analysis(
         await db.execute(
             "INSERT INTO jobs (id, status, document_ids, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
             (job_id, "pending", json.dumps(req.document_ids), now, now),
+        )
+        # Log who triggered the analysis
+        await db.execute(
+            "INSERT INTO audit_log (timestamp, agent_type, action, job_id, output_summary) VALUES (?, ?, ?, ?, ?)",
+            (now, "orchestrator", "analysis_triggered", job_id, f"Analysis triggered by {user['name']}"),
         )
         await db.commit()
     finally:

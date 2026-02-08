@@ -15,13 +15,17 @@ import {
 } from "lucide-react";
 import { getFindings, updateFindingStatus } from "@/lib/api";
 import { severityColor, agentLabel, agentColor, cn } from "@/lib/utils";
+import { useUser } from "@/context/user-context";
 
 export default function AnalysisPage() {
+  const { currentUser } = useUser();
   const [findings, setFindings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterAgent, setFilterAgent] = useState("");
   const [filterSeverity, setFilterSeverity] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const canVerifyDispute = currentUser.permissions.verifyDispute;
 
   useEffect(() => {
     async function load() {
@@ -37,8 +41,9 @@ export default function AnalysisPage() {
         setLoading(false);
       }
     }
+    setLoading(true);
     load();
-  }, [filterAgent, filterSeverity]);
+  }, [filterAgent, filterSeverity, currentUser.name]);
 
   // Group findings by agent
   const byAgent: Record<string, any[]> = {};
@@ -203,6 +208,7 @@ export default function AnalysisPage() {
                         </div>
 
                         {/* Verification buttons */}
+                        {canVerifyDispute && (
                         <div className="flex gap-2 pt-2 border-t border-[var(--border)]">
                           <button
                             onClick={async () => {
@@ -280,6 +286,7 @@ export default function AnalysisPage() {
                             Flag for Review
                           </button>
                         </div>
+                        )}
                       </div>
                     )}
                   </div>

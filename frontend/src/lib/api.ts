@@ -1,11 +1,17 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "dev-api-key-123";
 
+function getCurrentUserName(): string {
+  if (typeof window === "undefined") return "Janish Kumar";
+  return localStorage.getItem("governance_current_user") || "Janish Kumar";
+}
+
 async function apiFetch(path: string, options: RequestInit = {}) {
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: {
       "x-api-key": API_KEY,
+      "X-User-Name": getCurrentUserName(),
       ...options.headers,
     },
   });

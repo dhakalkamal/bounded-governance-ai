@@ -4,6 +4,7 @@ from typing import Optional
 from backend.app.auth import verify_api_key
 from backend.app.database import get_db
 from backend.app.models.schemas import AuditEntry, AuditLogResponse
+from backend.app.rbac import get_current_user
 
 router = APIRouter(prefix="/api/audit", tags=["audit"])
 
@@ -14,6 +15,7 @@ async def get_audit_log(
     agent_type: Optional[str] = Query(None),
     limit: int = Query(default=100, le=500),
     _key: str = Depends(verify_api_key),
+    user: dict = Depends(get_current_user),
 ):
     conditions = []
     params = []

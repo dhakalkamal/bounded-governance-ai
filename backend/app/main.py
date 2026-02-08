@@ -43,4 +43,4 @@ async def health():
 # TODO: Google Drive OAuth connector endpoints
 # TODO: Vector search pipeline integration
 # TODO: BigQuery integration for analytics
-# TODO: Complex RBAC middleware
+# RBAC: Implemented via rbac.py with persona-based access control
