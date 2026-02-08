@@ -12,3 +12,13 @@ backend/uploads/*
 dist/
 .DS_Store
 next-env.d.ts
+
+# Local/dev artifacts
+venv/
+.venv/
+__pycache__/
+.vscode/
+.pyright/
+.mypy_cache/
+.pytest_cache/
+.DS_Store
