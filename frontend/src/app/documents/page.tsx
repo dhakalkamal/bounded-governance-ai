@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { FileUp, File, Trash2, Play } from "lucide-react";
-import { listDocuments, uploadDocument, triggerAnalysis } from "@/lib/api";
+import { FileUp, File, Play, CheckCircle, Loader2, AlertCircle, Link as LinkIcon } from "lucide-react";
+import { useToast } from "@/components/Toast";
+import { DriveUploader } from "@/components/DriveUploader";
 
 const DOC_TYPES = [
   { value: "minutes", label: "Board Minutes" },
@@ -12,41 +13,141 @@ const DOC_TYPES = [
   { value: "other", label: "Other" },
 ];
 
+interface DriveDocument {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: string;
+  createdTime: string;
+  webViewLink?: string;
+  properties?: {
+    docType?: string;
+    uploadedAt?: string;
+    analysisComplete?: string;
+  };
+  analysisStatus?: 'pending' | 'analyzing' | 'complete' | 'error';
+}
+
 export default function DocumentsPage() {
-  const [documents, setDocuments] = useState<any[]>([]);
+  const [documents, setDocuments] = useState<DriveDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [docType, setDocType] = useState("minutes");
   const [dragActive, setDragActive] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [analysisMsg, setAnalysisMsg] = useState("");
+  const [isConnected, setIsConnected] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const { showToast } = useToast();
 
-  const loadDocs = useCallback(async () => {
+  // Check Google Drive connection status
+  const checkConnection = useCallback(async () => {
     try {
-      const res = await listDocuments();
-      setDocuments(res.documents || []);
-    } catch (e) {
-      console.error(e);
+      const response = await fetch('/api/auth/google/status');
+      const data = await response.json();
+      setIsConnected(data.connected);
+
+      if (data.connected) {
+        await loadDocs();
+      }
+    } catch (error) {
+      console.error('Failed to check connection:', error);
+      setIsConnected(false);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    loadDocs();
-  }, [loadDocs]);
-
-  async function handleUpload(files: FileList | File[]) {
-    setUploading(true);
+  // Load documents from Google Drive
+  const loadDocs = useCallback(async () => {
     try {
-      for (const file of Array.from(files)) {
-        await uploadDocument(file, docType);
+      const response = await fetch('/api/files/list');
+
+      if (!response.ok) {
+        throw new Error('Failed to load documents');
       }
+
+      const data = await response.json();
+      setDocuments(data.files || []);
+    } catch (e) {
+      console.error('Error loading documents:', e);
+      showToast('Failed to load documents', 'error');
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    checkConnection();
+  }, [checkConnection]);
+
+  // Connect to Google Drive
+  const connectToDrive = async () => {
+    try {
+      const response = await fetch('/api/auth/google');
+      const data = await response.json();
+
+      if (data.authUrl) {
+        window.location.href = data.authUrl;
+      }
+    } catch (error) {
+      showToast('Failed to connect to Google Drive', 'error');
+      console.error(error);
+    }
+  };
+
+  // Upload files to Google Drive
+  async function handleUpload(files: FileList | File[]) {
+    if (!isConnected) {
+      showToast('Please connect to Google Drive first', 'error');
+      return;
+    }
+
+    setUploading(true);
+    setProgress(0);
+
+    try {
+      const fileArray = Array.from(files);
+      const uploadedFileIds: string[] = [];
+
+      for (let i = 0; i < fileArray.length; i++) {
+        const file = fileArray[i];
+        setProgress(Math.round(((i + 1) / fileArray.length) * 100));
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('docType', docType);
+
+        const response = await fetch('/api/auth/upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Upload failed');
+        }
+
+        const data = await response.json();
+        uploadedFileIds.push(data.fileId);
+
+        showToast(`${file.name} uploaded successfully`, 'success');
+      }
+
+      // Reload documents
       await loadDocs();
+
+      // Auto-select uploaded files
+      setSelected(new Set(uploadedFileIds));
+
+      // Prompt for analysis
+      if (uploadedFileIds.length > 0) {
+        setAnalysisMsg(`${uploadedFileIds.length} file(s) ready for analysis`);
+      }
+
     } catch (e: any) {
-      alert(`Upload failed: ${e.message}`);
+      showToast(`Upload failed: ${e.message}`, 'error');
     } finally {
       setUploading(false);
+      setProgress(0);
     }
   }
 
@@ -61,57 +162,154 @@ export default function DocumentsPage() {
   function toggleSelect(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
   }
 
+  // Run Gemini AI analysis
   async function runAnalysis() {
-    if (selected.size === 0) return;
-    setAnalysisMsg("Starting analysis...");
+    if (selected.size === 0) {
+      showToast('Please select at least one document', 'error');
+      return;
+    }
+
+    setAnalysisMsg("Starting AI analysis...");
+
     try {
-      const res = await triggerAnalysis(Array.from(selected));
-      setAnalysisMsg(
-        `Analysis job created: ${res.job_id.slice(0, 8)}... Status: ${res.status}`
-      );
+      const selectedDocs = documents.filter(doc => selected.has(doc.id));
+      let completed = 0;
+
+      for (const doc of selectedDocs) {
+        // Update document status to analyzing
+        setDocuments(prev =>
+          prev.map(d =>
+            d.id === doc.id ? { ...d, analysisStatus: 'analyzing' as const } : d
+          )
+        );
+
+        setAnalysisMsg(`Analyzing ${doc.name}... (${completed + 1}/${selectedDocs.length})`);
+
+        try {
+          const response = await fetch('/api/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fileId: doc.id,
+              fileName: doc.name,
+              agents: ['minutes_analyzer', 'framework_checker', 'coi_detector', 'reviewer'],
+            }),
+          });
+
+          if (!response.ok) {
+            throw new Error('Analysis failed');
+          }
+
+          const result = await response.json();
+
+          // Update document status to complete
+          setDocuments(prev =>
+            prev.map(d =>
+              d.id === doc.id ? { ...d, analysisStatus: 'complete' as const } : d
+            )
+          );
+
+          completed++;
+
+          showToast(
+            `Analysis complete for ${doc.name}: ${result.total_findings} findings`,
+            'success',
+            5000
+          );
+
+        } catch (error) {
+          console.error(`Analysis error for ${doc.name}:`, error);
+
+          setDocuments(prev =>
+            prev.map(d =>
+              d.id === doc.id ? { ...d, analysisStatus: 'error' as const } : d
+            )
+          );
+
+          showToast(`Analysis failed for ${doc.name}`, 'error');
+        }
+      }
+
+      setAnalysisMsg(`Analysis complete! ${completed} of ${selectedDocs.length} documents analyzed.`);
+
+      // Clear selection after a delay
+      setTimeout(() => {
+        setSelected(new Set());
+        setAnalysisMsg("");
+      }, 5000);
+
     } catch (e: any) {
       setAnalysisMsg(`Error: ${e.message}`);
+      showToast('Analysis failed', 'error');
     }
   }
 
+  // Not connected view
+  if (!isConnected && !loading) {
+    return (
+      <div className="max-w-4xl mx-auto space-y-8 py-6">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">Documents</h1>
+          <p className="text-sm text-[var(--text-secondary)] mt-1">
+            Connect to Google Drive to upload and analyze governance documents
+          </p>
+        </div>
+
+        <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-12 text-center">
+          <LinkIcon className="w-16 h-16 mx-auto text-[var(--text-muted)] mb-4" />
+          <h2 className="text-xl font-semibold mb-2">Connect Google Drive</h2>
+          <p className="text-[var(--text-secondary)] mb-6 max-w-md mx-auto">
+            Securely connect your Google Drive to store and analyze governance documents with AI-powered agents.
+          </p>
+          <button
+            onClick={connectToDrive}
+            className="bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white px-6 py-3 rounded-lg font-medium transition-colors inline-flex items-center gap-2"
+          >
+            <LinkIcon className="w-5 h-5" />
+            Connect to Google Drive
+          </button>
+
+          <div className="mt-8 pt-8 border-t border-[var(--border)]">
+            <p className="text-xs text-[var(--text-muted)] max-w-2xl mx-auto">
+              🔒 Secure OAuth 2.0 authentication • Files stored in your Drive • AI analysis with Gemini 1.5 Pro • No database required
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Documents</h1>
-        <p className="text-[var(--text-secondary)] mt-1">
-          Upload and manage governance documents
-        </p>
+    <div className="max-w-4xl mx-auto space-y-8 py-6">
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">Documents</h1>
+          <p className="text-sm text-[var(--text-secondary)] mt-1">
+            Upload, manage, and analyze governance documents
+          </p>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-emerald-400">
+          <CheckCircle className="w-4 h-4" />
+          Connected to Drive
+        </div>
       </div>
 
-      {/* Upload zone */}
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragActive(true);
-        }}
-        onDragLeave={() => setDragActive(false)}
-        onDrop={handleDrop}
-        className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
-          dragActive
-            ? "border-[var(--accent)] bg-[var(--accent)]/5"
-            : "border-[var(--border)] bg-[var(--bg-card)]"
-        }`}
-      >
-        <FileUp className="w-10 h-10 mx-auto text-[var(--text-muted)] mb-3" />
-        <p className="text-sm text-[var(--text-secondary)] mb-3">
-          Drag & drop files here, or click to browse
-        </p>
-        <div className="flex items-center justify-center gap-3">
+      {/* Upload Zone */}
+      {/* Upload Zone */}
+      <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-6">
+        <div className="mb-4">
+          <label className="block text-sm font-medium mb-2">Document Type</label>
           <select
             value={docType}
             onChange={(e) => setDocType(e.target.value)}
-            className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)]"
+            disabled={uploading}
+            className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm w-full max-w-xs"
           >
             {DOC_TYPES.map((t) => (
               <option key={t.value} value={t.value}>
@@ -119,53 +317,50 @@ export default function DocumentsPage() {
               </option>
             ))}
           </select>
-          <label className="cursor-pointer bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-            {uploading ? "Uploading..." : "Browse Files"}
-            <input
-              type="file"
-              multiple
-              accept=".pdf,.docx,.txt"
-              className="hidden"
-              onChange={(e) => e.target.files && handleUpload(e.target.files)}
-              disabled={uploading}
-            />
-          </label>
         </div>
-        <p className="text-xs text-[var(--text-muted)] mt-3">
-          Supports PDF, DOCX, TXT
-        </p>
+
+        <DriveUploader
+          onUploadSuccess={() => {
+            loadDocs();
+            // We can't easily auto-select the file here without changing DriveUploader to return the full file object
+            // But loadDocs will refresh the list.
+          }}
+          docType={docType}
+        />
       </div>
 
-      {/* Analysis trigger */}
+      {/* Analysis Bar */}
       {selected.size > 0 && (
-        <div className="flex items-center gap-3 bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4">
+        <div className="flex items-center gap-3 bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4 shadow-sm">
           <Play className="w-4 h-4 text-[var(--accent)]" />
           <span className="text-sm">
             {selected.size} document{selected.size > 1 ? "s" : ""} selected
           </span>
+
           <button
             onClick={runAnalysis}
-            className="ml-auto bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            className="ml-auto bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
           >
-            Run Analysis
+            <Play className="w-4 h-4" />
+            Run AI Analysis
           </button>
+
           {analysisMsg && (
-            <span className="text-xs text-[var(--text-muted)]">
-              {analysisMsg}
-            </span>
+            <span className="text-xs text-[var(--text-muted)] animate-pulse">{analysisMsg}</span>
           )}
         </div>
       )}
 
-      {/* Document list */}
-      <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)]">
+      {/* Document List */}
+      <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] shadow-sm">
         {loading ? (
-          <div className="p-8 text-center text-[var(--text-muted)]">
+          <div className="p-8 text-center text-[var(--text-muted)] flex items-center justify-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin" />
             Loading documents...
           </div>
         ) : documents.length === 0 ? (
           <div className="p-8 text-center text-[var(--text-muted)]">
-            No documents uploaded yet.
+            No documents uploaded yet. Upload your first governance document above.
           </div>
         ) : (
           <div className="divide-y divide-[var(--border)]">
@@ -180,24 +375,76 @@ export default function DocumentsPage() {
                   onChange={() => toggleSelect(doc.id)}
                   className="w-4 h-4 rounded border-[var(--border)] accent-[var(--accent)]"
                 />
+
                 <File className="w-5 h-5 text-[var(--text-muted)] shrink-0" />
+
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{doc.filename}</p>
+                  <div className="flex items-center gap-2 mb-1">
+                    <p className="text-sm font-medium truncate">{doc.name}</p>
+                    {doc.analysisStatus && <AnalysisStatusBadge status={doc.analysisStatus} />}
+                  </div>
                   <p className="text-xs text-[var(--text-muted)]">
-                    {doc.doc_type} &middot;{" "}
-                    {doc.file_size
-                      ? `${(doc.file_size / 1024).toFixed(1)} KB`
-                      : ""}
+                    {doc.properties?.docType || 'other'} •{" "}
+                    {doc.size ? `${(parseInt(doc.size) / 1024).toFixed(1)} KB` : "Unknown size"}
                   </p>
                 </div>
-                <span className="text-xs text-[var(--text-muted)]">
-                  {new Date(doc.uploaded_at).toLocaleDateString()}
-                </span>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-[var(--text-muted)]">
+                    {new Date(doc.createdTime).toLocaleDateString()}
+                  </span>
+
+                  {doc.webViewLink && (
+                    <a
+                      href={doc.webViewLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-[var(--accent)] hover:underline"
+                    >
+                      View in Drive
+                    </a>
+                  )}
+                </div>
               </div>
             ))}
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+// Analysis status badge component
+function AnalysisStatusBadge({ status }: { status: string }) {
+  const configs = {
+    pending: {
+      icon: null,
+      label: 'Pending',
+      className: 'bg-gray-500/10 text-gray-400 border-gray-500/30',
+    },
+    analyzing: {
+      icon: <Loader2 className="w-3 h-3 animate-spin" />,
+      label: 'Analyzing',
+      className: 'bg-blue-500/10 text-blue-400 border-blue-500/30',
+    },
+    complete: {
+      icon: <CheckCircle className="w-3 h-3" />,
+      label: 'Analyzed',
+      className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
+    },
+    error: {
+      icon: <AlertCircle className="w-3 h-3" />,
+      label: 'Error',
+      className: 'bg-red-500/10 text-red-400 border-red-500/30',
+    },
+  };
+
+  const config = configs[status as keyof typeof configs] || configs.pending;
+
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded-full border flex items-center gap-1 ${config.className}`}>
+      {config.icon}
+      {config.label}
+    </span>
   );
 }

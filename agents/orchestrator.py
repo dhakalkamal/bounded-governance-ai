@@ -267,7 +267,7 @@ class Orchestrator:
         except Exception as e:
             await self.log_audit(
                 action="reviewer_error",
-                output_summary=f"Reviewer failed: {str(e)[:200]}",
+                output_summary=f"Reviewer failed: {str(e):.200}",
                 agent_type="reviewer",
             )
             # Don't fail the whole pipeline if reviewer fails
@@ -290,7 +290,7 @@ class Orchestrator:
         await self.db.commit()
 
         all_findings = []
-        agent_results = {}
+        agent_results: dict[str, int | str] = {}
 
         # Run agents sequentially (as specified in architecture)
         agents = [
@@ -322,9 +322,9 @@ class Orchestrator:
             except Exception as e:
                 await self.log_audit(
                     action=f"{agent_name}_failed",
-                    output_summary=f"{agent_name} failed: {str(e)[:200]}",
+                    output_summary=f"{agent_name} failed: {str(e):.200}",
                 )
-                agent_results[agent_name] = f"error: {str(e)[:100]}"
+                agent_results[agent_name] = f"error: {str(e):.100}"
 
         # Cross-document analysis step
         await asyncio.sleep(15)
@@ -376,7 +376,7 @@ class Orchestrator:
             except Exception as e:
                 await self.log_audit(
                     action="save_finding_error",
-                    output_summary=f"Failed to save finding: {str(e)[:200]}",
+                    output_summary=f"Failed to save finding: {str(e):.200}",
                 )
 
         summary = {
