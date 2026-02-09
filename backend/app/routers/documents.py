@@ -8,6 +8,7 @@ from backend.app.auth import verify_api_key
 from backend.app.config import settings
 from backend.app.database import get_db
 from backend.app.models.schemas import DocumentOut, DocumentListResponse
+from backend.app.rbac import get_current_user, get_accessible_filenames, check_permission
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -50,7 +51,9 @@ async def upload_document(
     file: UploadFile = File(...),
     doc_type: str = Form(default="other"),
     _key: str = Depends(verify_api_key),
+    user: dict = Depends(get_current_user),
 ):
+    check_permission(user, "uploadDocuments")
     doc_id = str(uuid.uuid4())
     os.makedirs(settings.upload_dir, exist_ok=True)
     file_path = os.path.join(settings.upload_dir, f"{doc_id}_{file.filename}")
@@ -84,7 +87,12 @@ async def upload_document(
 
 
 @router.get("", response_model=DocumentListResponse)
-async def list_documents(_key: str = Depends(verify_api_key)):
+async def list_documents(
+    _key: str = Depends(verify_api_key),
+    user: dict = Depends(get_current_user),
+):
+    accessible = get_accessible_filenames(user["name"])
+
     db = await get_db()
     try:
         cursor = await db.execute(
@@ -104,12 +112,19 @@ async def list_documents(_key: str = Depends(verify_api_key)):
             content_preview=(row["content_text"] or "")[:200] or None,
         )
         for row in rows
+        if row["filename"] in accessible
     ]
     return DocumentListResponse(documents=docs, total=len(docs))
 
 
 @router.get("/{doc_id}", response_model=DocumentOut)
-async def get_document(doc_id: str, _key: str = Depends(verify_api_key)):
+async def get_document(
+    doc_id: str,
+    _key: str = Depends(verify_api_key),
+    user: dict = Depends(get_current_user),
+):
+    accessible = get_accessible_filenames(user["name"])
+
     db = await get_db()
     try:
         cursor = await db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,))
@@ -119,6 +134,9 @@ async def get_document(doc_id: str, _key: str = Depends(verify_api_key)):
 
     if not row:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    if row["filename"] not in accessible:
+        raise HTTPException(status_code=403, detail="Access denied to this document")
 
     return DocumentOut(
         id=row["id"],

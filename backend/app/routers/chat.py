@@ -4,6 +4,7 @@ from backend.app.auth import verify_api_key
 from backend.app.config import settings
 from backend.app.database import get_db
 from backend.app.models.schemas import ChatRequest, ChatResponse
+from backend.app.rbac import get_current_user, get_accessible_filenames, check_permission
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -21,13 +22,18 @@ STRICT RULES:
 async def governed_chat(
     req: ChatRequest,
     _key: str = Depends(verify_api_key),
+    user: dict = Depends(get_current_user),
 ):
     """Governed chat: answers questions grounded in uploaded documents and findings only."""
+    check_permission(user, "chat")
+
     if not req.document_ids:
         raise HTTPException(
             status_code=400,
             detail="At least one document_id is required for governed chat",
         )
+
+    accessible = get_accessible_filenames(user["name"])
 
     db = await get_db()
     try:
@@ -39,12 +45,23 @@ async def governed_chat(
         )
         doc_rows = await cursor.fetchall()
 
-        # Fetch all findings for these documents
+        # Verify all requested documents are accessible
+        for row in doc_rows:
+            if row["filename"] not in accessible:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Access denied to document: {row['filename']}",
+                )
+
+        # Fetch findings only for accessible documents
         cursor = await db.execute(
             "SELECT title, description, agent_type, severity, source_document, section_reference, evidence_quote "
             "FROM findings ORDER BY created_at DESC"
         )
-        finding_rows = await cursor.fetchall()
+        finding_rows = [
+            row for row in await cursor.fetchall()
+            if row["source_document"] in accessible
+        ]
     finally:
         await db.close()
 

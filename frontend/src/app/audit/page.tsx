@@ -4,8 +4,10 @@ import { useEffect, useState } from "react";
 import { ScrollText, Clock, Filter } from "lucide-react";
 import { getAuditLog } from "@/lib/api";
 import { agentLabel, agentColor } from "@/lib/utils";
+import { useUser } from "@/context/user-context";
 
 export default function AuditPage() {
+  const { currentUser } = useUser();
   const [entries, setEntries] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterAgent, setFilterAgent] = useState("");
@@ -31,7 +33,7 @@ export default function AuditPage() {
       <div>
         <h1 className="text-2xl font-bold">Audit Trail</h1>
         <p className="text-[var(--text-secondary)] mt-1">
-          Complete log of every agent action with timestamps and input hashes
+          Complete log of every agent action with timestamps and input hashes — viewing as {currentUser.name} ({currentUser.role})
         </p>
       </div>
 
