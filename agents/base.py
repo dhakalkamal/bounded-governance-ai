@@ -17,7 +17,7 @@ class BaseAgent(ABC):
     """Base class for all governance agents."""
 
     agent_type: AgentType
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-3-flash-preview"
 
     def __init__(self, job_id: str, db):
         self.job_id = job_id

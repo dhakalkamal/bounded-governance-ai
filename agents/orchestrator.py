@@ -172,7 +172,7 @@ class Orchestrator:
         )
 
         response = self.client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3-flash-preview",
             contents=user_content,
         )
 
@@ -228,7 +228,7 @@ class Orchestrator:
 
         try:
             response = self.client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3-flash-preview",
                 contents=f"{REVIEWER_SYSTEM_PROMPT}\n\n---\n\nFINDINGS TO REVIEW:\n{findings_text}",
             )
 
