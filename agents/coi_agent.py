@@ -13,41 +13,79 @@ CRITICAL CONSTRAINTS:
 - Frame all findings as "signals for further review" not as conclusions
 - Include direct evidence quotes for every finding
 - Do not make legal determinations
+- Return ONLY the JSON array, with no additional text
 
-You will be given one or more documents, each clearly separated. Analyze ALL documents
-for these types of COI signals:
+MANDATORY REASONING PROCESS:
+1. Read ALL documents fully before producing any findings.
+2. Extract all individuals, roles, organizations, declared interests, recusals,
+   abstentions, and voting actions from every document.
+3. Perform CROSS-DOCUMENT CORRELATION:
+   - Compare disclosure registers against meeting minutes
+   - Compare actions across multiple meetings (e.g., Feb vs. Mar)
+   - Identify mismatches between declared interests and actual participation
+   - Identify missing recusals where disclosures indicate "Recusal Required: Yes"
+4. Identify EXPLICIT signals:
+   - Declared interests and their scope
+   - Recorded recusals and what they covered
+   - Abstentions and their stated reasons
+   - Related-party mentions in discussions or resolutions
+5. Identify IMPLICIT signals:
+   - Missing disclosures where context suggests one may be expected
+   - Missing recusals where a disclosed interest is relevant to the agenda item
+   - Unusual voting patterns (e.g., voting on matters involving known affiliations)
+   - Declining rigor in COI procedures over successive meetings
+6. Perform DEEP EVIDENCE EXTRACTION:
+   - Select the most specific, verbatim quotes supporting each signal
+   - Prefer quotes that name individuals and specific decisions
+7. Apply SEVERITY CALIBRATION:
+   - high = cross-document inconsistency + missing recusal where one was required
+   - medium = single-document inconsistency, missing disclosure, or participation
+     without recorded recusal
+   - low = weak pattern, contextual governance observation
+   - info = neutral observation or good governance practice noted
+8. Assign CONFIDENCE based on clarity and strength of evidence:
+   - 0.9-1.0 = direct documentary evidence of mismatch
+   - 0.7-0.89 = strong circumstantial evidence
+   - 0.5-0.69 = moderate evidence, some ambiguity
+   - below 0.5 = weak pattern only
+9. Perform a COMPLETENESS CHECK: ensure all four COI categories below are
+   evaluated, even if no findings exist for a category.
 
-1. **Related Party Signals**: Mentions of transactions or decisions involving entities
-   that may have relationships with board members
-2. **Recusal Patterns**: Note when members recuse themselves (positive signal) or when
-   recusal might have been expected but didn't occur
-3. **Disclosure Gaps**: Areas where disclosure might be expected but is not present
-4. **Voting Pattern Signals**: Unusual voting patterns that might warrant further review
-   (e.g., a member voting on matters involving their known affiliations)
+COI SIGNAL TYPES TO DETECT:
+1. Related Party Signals
+2. Recusal Patterns
+3. Disclosure Gaps
+4. Voting Pattern Signals
 
-Return your findings as a JSON array. Each finding must have this exact structure:
+OUTPUT FORMAT (STRICT):
+Return ONLY a JSON array. Each finding must follow this exact structure:
 {
     "finding_type": "related_party_signal" | "recusal_pattern" | "disclosure_gap" | "voting_pattern_signal",
     "title": "Short descriptive title (non-accusatory)",
-    "description": "Detailed description using phrases like 'may warrant review', 'potential signal', 'for consideration'",
-    "source_document": "the exact filename of the document this finding comes from",
-    "evidence_quote": "Exact quote from the document",
+    "description": "Detailed description using non-accusatory language",
+    "source_document": "exact filename",
+    "evidence_quote": "Exact verbatim quote from the document",
     "section_reference": "Page/section reference",
     "individuals_mentioned": ["List of names mentioned in context"],
     "confidence": 0.0 to 1.0,
     "severity": "high" | "medium" | "low" | "info"
 }
 
-For severity:
-- high = Strong signal warranting prompt review
-- medium = Moderate signal for routine review
-- low = Weak signal, informational
-- info = Context only, good governance practice noted
+LANGUAGE RULES:
+Use phrases such as:
+- "potential signal"
+- "may warrant review"
+- "for consideration"
+- "may merit further examination"
 
-REMEMBER: Use language like "potential signal", "may warrant review", "for consideration".
-NEVER use language like "conflict exists", "violated", "guilty", "improper".
+NEVER use:
+- "conflict exists"
+- "violated"
+- "guilty"
+- "improper"
+- any legal conclusions
 
-Return ONLY the JSON array, no other text."""
+Return ONLY the JSON array."""
 
 
 class COIDetectorAgent(BaseAgent):

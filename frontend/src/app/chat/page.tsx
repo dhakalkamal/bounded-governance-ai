@@ -95,10 +95,15 @@ export default function ChatPage() {
   useEffect(() => {
     setSelectedDocs(new Set());
     setMessages([]);
+    if (!canChat) return;
     listDocuments()
       .then((res) => setDocuments(res.documents || []))
       .catch(console.error);
-  }, [currentUser.name]);
+  }, [currentUser.name, canChat]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   if (!canChat) {
     return (
@@ -113,10 +118,6 @@ export default function ChatPage() {
       </div>
     );
   }
-
-  useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
 
   function toggleDoc(id: string) {
     setSelectedDocs((prev) => {
