@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { Send, FileText, Bot, User, ShieldX } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { listDocuments, sendChat } from "@/lib/api";
 import { useUser } from "@/context/user-context";
 
@@ -9,6 +10,75 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   sources?: { document_id: string; filename: string }[];
+}
+
+// Regex to match [Source: filename, Section: X] or [Finding: title] citations
+const CITATION_RE = /\[(Source:[^\]]+|Finding:[^\]]+)\]/g;
+
+function splitCitations(text: string): (string | { citation: string })[] {
+  const parts: (string | { citation: string })[] = [];
+  let last = 0;
+  for (const match of text.matchAll(CITATION_RE)) {
+    if (match.index! > last) parts.push(text.slice(last, match.index!));
+    parts.push({ citation: match[1] });
+    last = match.index! + match[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
+
+function CitationBadge({ text }: { text: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent)]/15 text-[var(--accent)] border border-[var(--accent)]/25 font-medium mx-0.5">
+      <FileText className="w-2.5 h-2.5" />
+      {text}
+    </span>
+  );
+}
+
+function FormattedMessage({ content }: { content: string }) {
+  // Split on citations first, then render markdown for text parts
+  const parts = useMemo(() => splitCitations(content), [content]);
+
+  return (
+    <div className="chat-markdown text-sm leading-relaxed">
+      {parts.map((part, i) =>
+        typeof part === "string" ? (
+          <ReactMarkdown
+            key={i}
+            components={{
+              p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+              strong: ({ children }) => (
+                <strong className="font-semibold text-[var(--text-primary)]">{children}</strong>
+              ),
+              ul: ({ children }) => (
+                <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>
+              ),
+              ol: ({ children }) => (
+                <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>
+              ),
+              li: ({ children }) => <li className="text-sm">{children}</li>,
+              h1: ({ children }) => <h3 className="font-semibold text-base mb-1 mt-2">{children}</h3>,
+              h2: ({ children }) => <h3 className="font-semibold text-base mb-1 mt-2">{children}</h3>,
+              h3: ({ children }) => <h4 className="font-semibold text-sm mb-1 mt-2">{children}</h4>,
+              code: ({ children }) => (
+                <code className="text-xs bg-white/10 px-1.5 py-0.5 rounded font-mono">{children}</code>
+              ),
+              blockquote: ({ children }) => (
+                <blockquote className="border-l-2 border-[var(--accent)] pl-3 my-2 text-[var(--text-secondary)] italic">
+                  {children}
+                </blockquote>
+              ),
+            }}
+          >
+            {part}
+          </ReactMarkdown>
+        ) : (
+          <CitationBadge key={i} text={part.citation} />
+        )
+      )}
+    </div>
+  );
 }
 
 export default function ChatPage() {
@@ -66,7 +136,6 @@ export default function ChatPage() {
     setSending(true);
 
     try {
-      // Build conversation history from existing messages (exclude sources)
       const history = messages.map((m) => ({
         role: m.role,
         content: m.content,
@@ -154,13 +223,17 @@ export default function ChatPage() {
                 <Bot className="w-6 h-6 text-[var(--accent)] shrink-0 mt-1" />
               )}
               <div
-                className={`max-w-[75%] rounded-xl px-4 py-3 text-sm ${
+                className={`max-w-[75%] rounded-xl px-4 py-3 ${
                   msg.role === "user"
-                    ? "bg-[var(--accent)] text-white"
+                    ? "bg-[var(--accent)] text-white text-sm"
                     : "bg-[var(--bg-secondary)] text-[var(--text-primary)]"
                 }`}
               >
-                <p className="whitespace-pre-wrap">{msg.content}</p>
+                {msg.role === "assistant" ? (
+                  <FormattedMessage content={msg.content} />
+                ) : (
+                  <p className="whitespace-pre-wrap">{msg.content}</p>
+                )}
                 {msg.sources && msg.sources.length > 0 && (
                   <div className="mt-2 pt-2 border-t border-white/10 flex flex-wrap gap-2">
                     {msg.sources.map((s, j) => (

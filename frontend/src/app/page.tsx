@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import Link from "next/link";
 import {
   FileText,
   AlertTriangle,
   CheckCircle,
   Clock,
-  ArrowRight,
   Flag,
+  Download,
 } from "lucide-react";
 import {
   PieChart,
@@ -23,9 +23,10 @@ import {
   LineChart,
   Line,
   CartesianGrid,
+  Legend,
 } from "recharts";
-import { listDocuments, getFindings, getAuditLog } from "@/lib/api";
-import { severityColor, agentLabel, agentColor } from "@/lib/utils";
+import { listDocuments, getFindings } from "@/lib/api";
+import { agentLabel } from "@/lib/utils";
 import { useUser } from "@/context/user-context";
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -33,13 +34,6 @@ const SEVERITY_COLORS: Record<string, string> = {
   medium: "#fbbf24",
   low: "#60a5fa",
   info: "#94a3b8",
-};
-
-const AGENT_COLORS: Record<string, string> = {
-  minutes_analyzer: "#60a5fa",
-  framework_checker: "#a78bfa",
-  coi_detector: "#fbbf24",
-  cross_document: "#2dd4bf",
 };
 
 const MONTHS = ["Jan", "Feb", "Mar"];
@@ -52,25 +46,30 @@ function monthFromFilename(filename: string): string | null {
   return null;
 }
 
+function escapeCsvField(value: string): string {
+  if (!value) return "";
+  if (value.includes(",") || value.includes('"') || value.includes("\n")) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
 export default function Dashboard() {
   const { currentUser } = useUser();
   const [allFindings, setAllFindings] = useState<any[]>([]);
-  const [recentAudit, setRecentAudit] = useState<any[]>([]);
   const [docCount, setDocCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
       try {
-        const [docs, findingsRes, auditRes] = await Promise.all([
+        const [docs, findingsRes] = await Promise.all([
           listDocuments().catch(() => ({ documents: [], total: 0 })),
           getFindings().catch(() => ({ findings: [], total: 0 })),
-          getAuditLog().catch(() => ({ entries: [], total: 0 })),
         ]);
 
         setDocCount(docs.total || 0);
         setAllFindings(findingsRes.findings || []);
-        setRecentAudit((auditRes.entries || []).slice(0, 8));
       } catch (e) {
         console.error("Dashboard load error:", e);
       } finally {
@@ -81,7 +80,6 @@ export default function Dashboard() {
     load();
   }, [currentUser.name]);
 
-  // Derived chart data from real findings
   const stats = useMemo(() => {
     const high = allFindings.filter((f) => f.severity === "high").length;
     const medium = allFindings.filter((f) => f.severity === "medium").length;
@@ -130,6 +128,41 @@ export default function Dashboard() {
     return MONTHS.map((m) => ({ month: m, findings: counts[m] }));
   }, [allFindings]);
 
+  const exportCsv = useCallback(() => {
+    const headers = [
+      "title",
+      "severity",
+      "agent_type",
+      "confidence",
+      "source_document",
+      "description",
+      "evidence_quote",
+      "review_status",
+    ];
+    const rows = allFindings.map((f) =>
+      headers.map((h) => {
+        let val = f[h];
+        if (h === "confidence" && typeof val === "number") val = (val * 100).toFixed(1) + "%";
+        return escapeCsvField(String(val ?? ""));
+      }).join(",")
+    );
+    const csv = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `findings_export_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [allFindings]);
+
+  const tooltipStyle = {
+    background: "var(--bg-secondary)",
+    border: "1px solid var(--border)",
+    borderRadius: "8px",
+    fontSize: "12px",
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -142,11 +175,22 @@ export default function Dashboard() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Governance Dashboard</h1>
-        <p className="text-[var(--text-secondary)] mt-1">
-          Overview of governance analysis and agent findings
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Governance Dashboard</h1>
+          <p className="text-[var(--text-secondary)] mt-1">
+            Overview of governance analysis and agent findings
+          </p>
+        </div>
+        {allFindings.length > 0 && (
+          <button
+            onClick={exportCsv}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--bg-card)] border border-[var(--border)] text-sm text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--text-primary)] transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            Export CSV
+          </button>
+        )}
       </div>
 
       {/* Stats cards */}
@@ -177,46 +221,40 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* Charts row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Severity pie */}
-        <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
+      {/* Charts — 2-column layout for bigger charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Severity pie — larger */}
+        <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-6">
           <h2 className="text-base font-semibold mb-4">Severity Breakdown</h2>
           {severityData.length === 0 ? (
-            <p className="text-sm text-[var(--text-muted)] py-8 text-center">
+            <p className="text-sm text-[var(--text-muted)] py-12 text-center">
               No findings data yet.
             </p>
           ) : (
             <div className="flex flex-col items-center">
-              <ResponsiveContainer width="100%" height={180}>
+              <ResponsiveContainer width="100%" height={260}>
                 <PieChart>
                   <Pie
                     data={severityData}
                     cx="50%"
                     cy="50%"
-                    innerRadius={45}
-                    outerRadius={75}
+                    innerRadius={60}
+                    outerRadius={100}
                     dataKey="value"
                     stroke="none"
+                    label={({ name, value }) => `${name}: ${value}`}
                   >
                     {severityData.map((d, i) => (
                       <Cell key={i} fill={d.color} />
                     ))}
                   </Pie>
-                  <Tooltip
-                    contentStyle={{
-                      background: "var(--bg-secondary)",
-                      border: "1px solid var(--border)",
-                      borderRadius: "8px",
-                      fontSize: "12px",
-                    }}
-                  />
+                  <Tooltip contentStyle={tooltipStyle} />
                 </PieChart>
               </ResponsiveContainer>
-              <div className="flex flex-wrap justify-center gap-3 mt-2">
+              <div className="flex flex-wrap justify-center gap-4 mt-3">
                 {severityData.map((d) => (
                   <span key={d.name} className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
-                    <span className="w-2.5 h-2.5 rounded-full" style={{ background: d.color }} />
+                    <span className="w-3 h-3 rounded-full" style={{ background: d.color }} />
                     {d.name} ({d.value})
                   </span>
                 ))}
@@ -225,165 +263,66 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Agent bar chart */}
-        <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
+        {/* Agent bar chart — larger */}
+        <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-6">
           <h2 className="text-base font-semibold mb-4">AI Agent Performance</h2>
           {agentData.length === 0 ? (
-            <p className="text-sm text-[var(--text-muted)] py-8 text-center">
+            <p className="text-sm text-[var(--text-muted)] py-12 text-center">
               No findings data yet.
             </p>
           ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={agentData} layout="vertical" margin={{ left: 10, right: 10, top: 0, bottom: 0 }}>
-                <XAxis type="number" tick={{ fill: "var(--text-muted)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis
-                  type="category"
-                  dataKey="name"
-                  tick={{ fill: "var(--text-muted)", fontSize: 11 }}
-                  axisLine={false}
-                  tickLine={false}
-                  width={105}
-                />
-                <Tooltip
-                  contentStyle={{
-                    background: "var(--bg-secondary)",
-                    border: "1px solid var(--border)",
-                    borderRadius: "8px",
-                    fontSize: "12px",
-                  }}
-                  formatter={(value: unknown, name: unknown) => [
-                    String(value),
-                    name === "findings" ? "Findings" : "Avg Confidence %",
-                  ]}
-                />
-                <Bar dataKey="findings" fill="#60a5fa" radius={[0, 4, 4, 0]} barSize={14} name="findings" />
-                <Bar dataKey="accuracy" fill="#a78bfa" radius={[0, 4, 4, 0]} barSize={14} name="accuracy" />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-          {agentData.length > 0 && (
-            <div className="flex justify-center gap-4 mt-2">
-              <span className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
-                <span className="w-2.5 h-2.5 rounded-full bg-blue-400" /> Findings
-              </span>
-              <span className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
-                <span className="w-2.5 h-2.5 rounded-full bg-purple-400" /> Avg Confidence %
-              </span>
-            </div>
+            <>
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={agentData} layout="vertical" margin={{ left: 10, right: 20, top: 0, bottom: 0 }}>
+                  <XAxis type="number" tick={{ fill: "var(--text-muted)", fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    tick={{ fill: "var(--text-muted)", fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                    width={115}
+                  />
+                  <Tooltip
+                    contentStyle={tooltipStyle}
+                    formatter={(value: unknown, name: unknown) => [
+                      String(value),
+                      name === "findings" ? "Findings" : "Avg Confidence %",
+                    ]}
+                  />
+                  <Bar dataKey="findings" fill="#60a5fa" radius={[0, 4, 4, 0]} barSize={16} name="findings" />
+                  <Bar dataKey="accuracy" fill="#a78bfa" radius={[0, 4, 4, 0]} barSize={16} name="accuracy" />
+                </BarChart>
+              </ResponsiveContainer>
+              <div className="flex justify-center gap-5 mt-3">
+                <span className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+                  <span className="w-3 h-3 rounded-full bg-blue-400" /> Findings
+                </span>
+                <span className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+                  <span className="w-3 h-3 rounded-full bg-purple-400" /> Avg Confidence %
+                </span>
+              </div>
+            </>
           )}
         </div>
 
-        {/* Trend line chart */}
-        <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
+        {/* Trend line chart — full width */}
+        <div className="lg:col-span-2 bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-6">
           <h2 className="text-base font-semibold mb-4">Findings Over Time</h2>
           {allFindings.length === 0 ? (
-            <p className="text-sm text-[var(--text-muted)] py-8 text-center">
+            <p className="text-sm text-[var(--text-muted)] py-12 text-center">
               No findings data yet.
             </p>
           ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={trendData} margin={{ left: -10, right: 10, top: 5, bottom: 0 }}>
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart data={trendData} margin={{ left: -10, right: 20, top: 5, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                 <XAxis dataKey="month" tick={{ fill: "var(--text-muted)", fontSize: 12 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: "var(--text-muted)", fontSize: 12 }} axisLine={false} tickLine={false} allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{
-                    background: "var(--bg-secondary)",
-                    border: "1px solid var(--border)",
-                    borderRadius: "8px",
-                    fontSize: "12px",
-                  }}
-                />
-                <Line type="monotone" dataKey="findings" stroke="#60a5fa" strokeWidth={2} dot={{ r: 4, fill: "#60a5fa" }} />
+                <Tooltip contentStyle={tooltipStyle} />
+                <Line type="monotone" dataKey="findings" stroke="#60a5fa" strokeWidth={2.5} dot={{ r: 5, fill: "#60a5fa" }} activeDot={{ r: 7 }} />
               </LineChart>
             </ResponsiveContainer>
-          )}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recent findings */}
-        <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold">Recent Findings</h2>
-            <Link
-              href="/analysis"
-              className="text-xs text-[var(--accent)] hover:underline flex items-center gap-1"
-            >
-              View all <ArrowRight className="w-3 h-3" />
-            </Link>
-          </div>
-          {allFindings.length === 0 ? (
-            <p className="text-sm text-[var(--text-muted)] py-8 text-center">
-              No findings yet. Upload documents and run an analysis.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {allFindings.slice(0, 5).map((f: any) => (
-                <div
-                  key={f.id}
-                  className="flex items-start gap-3 p-3 rounded-lg bg-[var(--bg-secondary)]"
-                >
-                  <span
-                    className={`text-xs px-2 py-0.5 rounded-full border ${severityColor(f.severity)}`}
-                  >
-                    {f.severity}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{f.title}</p>
-                    <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                      <span className={`${agentColor(f.agent_type)} px-1.5 py-0.5 rounded text-xs`}>
-                        {agentLabel(f.agent_type)}
-                      </span>
-                      {f.source_document && (
-                        <span className="ml-2">{f.source_document}</span>
-                      )}
-                    </p>
-                  </div>
-                  <span className="text-xs text-[var(--text-muted)] whitespace-nowrap">
-                    {(f.confidence * 100).toFixed(0)}%
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Audit trail */}
-        <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold">Audit Trail</h2>
-            <Link
-              href="/audit"
-              className="text-xs text-[var(--accent)] hover:underline flex items-center gap-1"
-            >
-              View all <ArrowRight className="w-3 h-3" />
-            </Link>
-          </div>
-          {recentAudit.length === 0 ? (
-            <p className="text-sm text-[var(--text-muted)] py-8 text-center">
-              No audit entries yet.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {recentAudit.map((entry: any) => (
-                <div
-                  key={entry.id}
-                  className="flex items-center gap-3 px-3 py-2 rounded-lg bg-[var(--bg-secondary)] text-xs"
-                >
-                  <Clock className="w-3 h-3 text-[var(--text-muted)] shrink-0" />
-                  <span className="text-[var(--text-muted)] whitespace-nowrap">
-                    {new Date(entry.timestamp).toLocaleTimeString()}
-                  </span>
-                  <span className={`${agentColor(entry.agent_type || "")} px-1.5 py-0.5 rounded`}>
-                    {entry.agent_type || "system"}
-                  </span>
-                  <span className="text-[var(--text-secondary)] truncate">
-                    {entry.action}
-                  </span>
-                </div>
-              ))}
-            </div>
           )}
         </div>
       </div>

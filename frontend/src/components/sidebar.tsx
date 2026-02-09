@@ -150,14 +150,6 @@ export function Sidebar() {
           );
         })}
       </nav>
-      <div className="p-4 border-t border-[var(--border)]">
-        <p className="text-xs text-[var(--text-muted)]">
-          Gemini 2.5 Pro Agents
-        </p>
-        <p className="text-xs text-[var(--text-muted)] mt-0.5">
-          All actions audited
-        </p>
-      </div>
     </aside>
   );
 }
